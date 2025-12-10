@@ -170,7 +170,7 @@ def top_categories(
     return result
 
 
-def compute_quality_flags(summary: DatasetSummary, missing_df: pd.DataFrame) -> Dict[str, Any]:
+def compute_quality_flags(df: pd.DataFrame, summary: DatasetSummary, missing_df: pd.DataFrame) -> Dict[str, Any]:
     """
     Простейшие эвристики «качества» данных:
     - слишком много пропусков;
@@ -185,14 +185,64 @@ def compute_quality_flags(summary: DatasetSummary, missing_df: pd.DataFrame) -> 
     flags["max_missing_share"] = max_missing_share
     flags["too_many_missing"] = max_missing_share > 0.5
 
+    # флаг, показывающий, есть ли колонки, где все значения одинаковые.
+    has_constant_columns = False
+    for col in summary.columns:
+        if col.unique == 1:
+            has_constant_columns = True
+            break
+    flags["has_constant_columns"] = has_constant_columns
+
+    # флаг, сигнализирующий, что есть категориальные признаки с очень большим числом уникальных значений (нужно определить свой порог).
+    has_high_cardinality_categoricals = False
+    cat_col = df.select_dtypes(include=['object', 'category']).columns
+    for col in cat_col:
+        if 'user_id' in col.lower():
+            continue
+        uniq = df[col].nunique()
+        total_non_null = df[col].notna().sum()
+
+        if total_non_null > 0:
+            if uniq/total_non_null>0.8:
+                has_high_cardinality_categoricals = True
+                break
+            elif uniq>30:
+                has_high_cardinality_categoricals = True
+                break
+    flags["has_high_cardinality_categoricals "] = has_high_cardinality_categoricals
+
+    # проверка, что идентификатор (например, user_id) уникален; при наличии дубликатов выставлять флаг.
+    has_suspicious_id_duplicates = False
+    if "user_id" in df.columns:
+        if df['user_id'].duplicated().any():
+            has_suspicious_id_duplicates = True
+            duplicate_count = df['user_id'].duplicated().sum()
+            flags["user_id_duplicate_count"] = duplicate_count
+
+    flags["has_suspicious_id_duplicates"] = has_suspicious_id_duplicates
+
+    # для числовых колонок проверить долю нулей и выставить флаг, если она превышает выбранный порог.
+    has_many_zero_values = False
+    num_col = df.select_dtypes(include='number').columns
+    for col in num_col:
+        null_col = (df[col]==0).sum()
+        if null_col / len(df)>0.7:
+            has_many_zero_values = True
+            break
+    flags["has_many_zero_values"] = has_many_zero_values
+
     # Простейший «скор» качества
     score = 1.0
     score -= max_missing_share  # чем больше пропусков, тем хуже
+    
+    score -= has_many_zero_values*0.1
+    score -= has_constant_columns*0.1
+    score -= has_high_cardinality_categoricals*0.1
+    score -= has_suspicious_id_duplicates*0.1
     if summary.n_rows < 100:
         score -= 0.2
     if summary.n_cols > 100:
         score -= 0.1
-
     score = max(0.0, min(1.0, score))
     flags["quality_score"] = score
 

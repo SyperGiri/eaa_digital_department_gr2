@@ -66,7 +66,10 @@ def report(
     out_dir: str = typer.Option("reports", help="Каталог для отчёта."),
     sep: str = typer.Option(",", help="Разделитель в CSV."),
     encoding: str = typer.Option("utf-8", help="Кодировка файла."),
-    max_hist_columns: int = typer.Option(6, help="Максимум числовых колонок для гистограмм."),
+    max_hist_columns: int = typer.Option(9, help="Максимум числовых колонок для гистограмм."),
+    top_k_categories: int = typer.Option(8, help="сколько top-значений выводить для категориальных признаков."),
+    title: str = typer.Option("EDA-отчёт", help="заголовок отчёта"),
+    min_missing_share: int = typer.Option(0.1, help="порог доли пропусков, выше которого колонка считается проблемной и попадает в отдельный список в отчёте")
 ) -> None:
     """
     Сгенерировать полный EDA-отчёт:
@@ -89,7 +92,7 @@ def report(
     top_cats = top_categories(df)
 
     # 2. Качество в целом
-    quality_flags = compute_quality_flags(summary, missing_df)
+    quality_flags = compute_quality_flags(df, summary, missing_df)
 
     # 3. Сохраняем табличные артефакты
     summary_df.to_csv(out_root / "summary.csv", index=False)
@@ -102,9 +105,14 @@ def report(
     # 4. Markdown-отчёт
     md_path = out_root / "report.md"
     with md_path.open("w", encoding="utf-8") as f:
-        f.write(f"# EDA-отчёт\n\n")
+        f.write(f"# {title}\n\n")
         f.write(f"Исходный файл: `{Path(path).name}`\n\n")
         f.write(f"Строк: **{summary.n_rows}**, столбцов: **{summary.n_cols}**\n\n")
+
+        f.write("## Параметры отчёта\n\n")
+        f.write(f"- Макс. гистограмм: **{max_hist_columns}**\n")
+        f.write(f"- Top-K категорий: **{top_k_categories}**\n")
+        f.write(f"- Порог проблемных пропусков: **{min_missing_share:.1%}**\n\n")
 
         f.write("## Качество данных (эвристики)\n\n")
         f.write(f"- Оценка качества: **{quality_flags['quality_score']:.2f}**\n")
@@ -120,7 +128,13 @@ def report(
         if missing_df.empty:
             f.write("Пропусков нет или датасет пуст.\n\n")
         else:
-            f.write("См. файлы `missing.csv` и `missing_matrix.png`.\n\n")
+            propusk = missing_df[missing_df["missing_share"] > min_missing_share]
+            if not propusk.empty:
+                f.write(f"### Проблемные колонки (пропусков > {min_missing_share:.1%})\n\n")
+                for idx, row in propusk.iterrows():
+                    f.write(f"- **{idx}**: {row['missing_share']:.1%} пропусков ({int(row['missing_count'])} значений)\n")
+                f.write("\n")
+            f.write("См. файлы `missing.csv` и `missing_matrix.png` для полной таблицы пропусков.\n\n")
 
         f.write("## Корреляция числовых признаков\n\n")
         if corr_df.empty:
@@ -132,9 +146,14 @@ def report(
         if not top_cats:
             f.write("Категориальные/строковые признаки не найдены.\n\n")
         else:
-            f.write("См. файлы в папке `top_categories/`.\n\n")
+            f.write(f"Топ-{top_k_categories} значений по категориальным признакам сохранены в папке `top_categories/`.\n\n")
+            f.write(f"Обработано колонок: {len(top_cats)}\n")
+            for col_name in top_cats.keys():
+                f.write(f"- `{col_name}`\n")
+            f.write("\n")
 
         f.write("## Гистограммы числовых колонок\n\n")
+        f.write(f"Построено гистограмм для первых **{min(max_hist_columns, len(df.select_dtypes(include='number').columns))}** числовых колонок.\n")
         f.write("См. файлы `hist_*.png`.\n")
 
     # 5. Картинки
@@ -146,7 +165,10 @@ def report(
     typer.echo(f"- Основной markdown: {md_path}")
     typer.echo("- Табличные файлы: summary.csv, missing.csv, correlation.csv, top_categories/*.csv")
     typer.echo("- Графики: hist_*.png, missing_matrix.png, correlation_heatmap.png")
-
+    typer.echo(f"  Заголовок: {title}")
+    typer.echo(f"  Max гистограмм: {max_hist_columns}")
+    typer.echo(f"  Top-K категорий: {top_k_categories}")
+    typer.echo(f"  Порог проблемных пропусков: {min_missing_share:.1%}")
 
 if __name__ == "__main__":
     app()
