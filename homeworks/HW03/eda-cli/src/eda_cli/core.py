@@ -209,16 +209,17 @@ def compute_quality_flags(df: pd.DataFrame, summary: DatasetSummary, missing_df:
             elif uniq>30:
                 has_high_cardinality_categoricals = True
                 break
-    flags["has_high_cardinality_categoricals "] = has_high_cardinality_categoricals
+    flags["has_high_cardinality_categoricals"] = has_high_cardinality_categoricals
 
     # проверка, что идентификатор (например, user_id) уникален; при наличии дубликатов выставлять флаг.
     has_suspicious_id_duplicates = False
-    if "user_id" in df.columns:
-        if df['user_id'].duplicated().any():
+    id_cols = [col for col in df.columns if 'id' in col.lower()]
+    for col in id_cols:
+        if df[col].duplicated().any():
             has_suspicious_id_duplicates = True
-            duplicate_count = df['user_id'].duplicated().sum()
-            flags["user_id_duplicate_count"] = duplicate_count
-
+            duplicate_count = df[col].duplicated().sum()
+            flags[f"{col}_duplicate_count"] = duplicate_count
+            break
     flags["has_suspicious_id_duplicates"] = has_suspicious_id_duplicates
 
     # для числовых колонок проверить долю нулей и выставить флаг, если она превышает выбранный порог.
@@ -226,7 +227,7 @@ def compute_quality_flags(df: pd.DataFrame, summary: DatasetSummary, missing_df:
     num_col = df.select_dtypes(include='number').columns
     for col in num_col:
         null_col = (df[col]==0).sum()
-        if null_col / len(df)>0.7:
+        if null_col / len(df)>0.5:
             has_many_zero_values = True
             break
     flags["has_many_zero_values"] = has_many_zero_values
